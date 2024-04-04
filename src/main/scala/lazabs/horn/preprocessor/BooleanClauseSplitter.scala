@@ -228,6 +228,38 @@ class BooleanClauseSplitter extends HornPreprocessor {
     newClauses
   }
 
+  private def moreCleverSplit(clause : Clause, method : Int)
+                         (implicit p : SimpleAPI) : Seq[Clause] =
+    if (needsSplittingPos(clause.constraint)) {
+      // first try the full splitting, but this might sometimes explode
+      val startTime = System.currentTimeMillis
+      def checker() : Unit = {
+        GlobalParameters.get.timeoutChecker
+        val currentTime = System.currentTimeMillis
+        if (currentTime - startTime > SPLITTING_TO ||
+            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+          Timeout.raise
+      }
+      if (method == 2){
+        val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+          splitWithIntPred(clause, clause, Some(indexTree))._1
+      }
+            
+      Timeout.catchTimeout {
+        Timeout.withChecker(checker _) { fullDNF(clause) }
+      } {
+        case _ => {
+          val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+          splitWithIntPred(clause, clause, Some(indexTree))._1
+        }
+      }
+    } else {
+      List(clause)
+    }
+
+
   private val globalStartTime = System.currentTimeMillis
 
   private def cleverSplit(clause : Clause)
@@ -242,7 +274,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
             currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
           Timeout.raise
       }
-
+            
       Timeout.catchTimeout {
         Timeout.withChecker(checker _) { fullDNF(clause) }
       } {
