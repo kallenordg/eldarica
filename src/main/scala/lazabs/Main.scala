@@ -135,6 +135,7 @@ class GlobalParameters extends Cloneable {
   var dotFile : String = null
   var pngNo = true;
   var eogCEX = false;
+  var showClauseGraph = false
   var plainCEX = false;
   var simplifiedCEX = false;
   var cexInSMT = false;
@@ -225,6 +226,7 @@ class GlobalParameters extends Cloneable {
     that.dotFile = this.dotFile
     that.pngNo = this.pngNo
     that.eogCEX = this.eogCEX
+    that.showClauseGraph = this.showClauseGraph
     that.plainCEX = this.plainCEX
     that.cexInSMT = this.cexInSMT
     that.simplifiedCEX = this.simplifiedCEX
@@ -503,6 +505,7 @@ object Main {
       case "-cexSimplified" :: rest => simplifiedCEX = true; arguments(rest)
       case "-assert" :: rest => GlobalParameters.get.assertions = true; arguments(rest)
       case "-verifyInterpolants" :: rest => verifyInterpolants = true; arguments(rest)
+      case "-clauseGraph" :: rest => showClauseGraph = true; arguments(rest)
       case "-h" :: rest => println(greeting + "\n\nUsage: eld [options] file\n\n" +
           "General options:\n" +
           " -h                Show this information\n" +

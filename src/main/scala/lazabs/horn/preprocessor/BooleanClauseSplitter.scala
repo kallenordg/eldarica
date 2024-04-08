@@ -32,10 +32,9 @@ package lazabs.horn.preprocessor
 import lazabs.GlobalParameters
 import lazabs.horn.bottomup.HornPredAbs.predArgumentSorts
 import lazabs.horn.bottomup.HornClauses._
-import lazabs.horn.Util.Dag
+import lazabs.horn.Util.{ClauseTermGraph, Dag}
 import lazabs.horn.parser.HornReader
-
-import ap.{SimpleAPI, PresburgerTools}
+import ap.{PresburgerTools, SimpleAPI}
 import SimpleAPI.ProverStatus
 import ap.basetypes.{IdealInt, Leaf, Tree}
 import ap.parser._
@@ -43,8 +42,7 @@ import IExpression._
 import ap.util.{Seqs, Timeout}
 import ap.types.MonoSortedPredicate
 
-import scala.collection.mutable.{HashSet => MHashSet, HashMap => MHashMap,
-                                 LinkedHashSet, ArrayBuffer}
+import scala.collection.mutable.{ArrayBuffer, LinkedHashSet, HashMap => MHashMap, HashSet => MHashSet}
 
 object BooleanClauseSplitter {
 
@@ -261,9 +259,17 @@ class BooleanClauseSplitter extends HornPreprocessor {
 
 
   private val globalStartTime = System.currentTimeMillis
+  private var clauseGraphCounter = 0
 
   private def cleverSplit(clause : Clause)
-                         (implicit p : SimpleAPI) : Seq[Clause] =
+                         (implicit p : SimpleAPI) : Seq[Clause] = {
+
+    if(lazabs.GlobalParameters.get.showClauseGraph) {
+      val clauseGraph = new ClauseTermGraph(clause)
+      clauseGraph.show(s"clause-graph-$clauseGraphCounter.png")
+      clauseGraphCounter += 1
+    }
+
     if (needsSplittingPos(clause.constraint)) {
       // first try the full splitting, but this might sometimes explode
       val startTime = System.currentTimeMillis
@@ -287,6 +293,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
     } else {
       List(clause)
     }
+  }
 
   //////////////////////////////////////////////////////////////////////////////
 
