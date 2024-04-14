@@ -85,6 +85,28 @@ class BooleanClauseSplitter extends HornPreprocessor {
     (newClauses, hints, translator)
   }
 
+  private def getSizeSubexpression(subexpression: IExpression): Int = {
+    var count = 0
+    for (subOfSub <- subexpression.iterator){
+      if(subOfSub.length > 1){
+        count += getSizeSubexpression(subOfSub)
+      }
+      else{
+        count += 1
+      }
+    }
+    count
+  }
+
+  private def getSize(wrappedArray: Seq[IFormula]): Int = {
+    var size = 0
+    for(iformula <- wrappedArray){
+      for(subExpr <- iformula.iterator){
+        size = size + getSizeSubexpression(subExpr)
+      }
+    }
+    size
+}
   //////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -107,7 +129,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case _              => false
       }
 
-      if (compoundConjs.size > 8) {
+      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000) {
         // introduce a new predicate to split the clause into multiple
         // clauses, and this way avoid combinatorial explosion
 
@@ -226,38 +248,6 @@ class BooleanClauseSplitter extends HornPreprocessor {
     newClauses
   }
 
-  private def moreCleverSplit(clause : Clause, method : Int)
-                         (implicit p : SimpleAPI) : Seq[Clause] =
-    if (needsSplittingPos(clause.constraint)) {
-      // first try the full splitting, but this might sometimes explode
-      val startTime = System.currentTimeMillis
-      def checker() : Unit = {
-        GlobalParameters.get.timeoutChecker
-        val currentTime = System.currentTimeMillis
-        if (currentTime - startTime > SPLITTING_TO ||
-            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
-          Timeout.raise
-      }
-      if (method == 2){
-        val indexTree =
-            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-          splitWithIntPred(clause, clause, Some(indexTree))._1
-      }
-            
-      Timeout.catchTimeout {
-        Timeout.withChecker(checker _) { fullDNF(clause) }
-      } {
-        case _ => {
-          val indexTree =
-            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-          splitWithIntPred(clause, clause, Some(indexTree))._1
-        }
-      }
-    } else {
-      List(clause)
-    }
-
-
   private val globalStartTime = System.currentTimeMillis
   private var clauseGraphCounter = 0
 
@@ -272,24 +262,34 @@ class BooleanClauseSplitter extends HornPreprocessor {
 
     if (needsSplittingPos(clause.constraint)) {
       // first try the full splitting, but this might sometimes explode
-      val startTime = System.currentTimeMillis
-      def checker() : Unit = {
-        GlobalParameters.get.timeoutChecker
-        val currentTime = System.currentTimeMillis
-        if (currentTime - startTime > SPLITTING_TO ||
-            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
-          Timeout.raise
-      }
-            
-      Timeout.catchTimeout {
-        Timeout.withChecker(checker _) { fullDNF(clause) }
-      } {
-        case _ => {
-          val indexTree =
+      // val startTime = System.currentTimeMillis
+      // def checker() : Unit = {
+      //   GlobalParameters.get.timeoutChecker
+      //   val currentTime = System.currentTimeMillis
+      //   if (currentTime - startTime > SPLITTING_TO ||
+      //       currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+      //     Timeout.raise
+      // }
+      val method = 2
+      if (method == 2){
+        val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
           splitWithIntPred(clause, clause, Some(indexTree))._1
-        }
       }
+      else {
+        fullDNF(clause)
+      }
+            
+      // Timeout.catchTimeout {
+      //   Timeout.withChecker(checker _) { 
+      //     fullDNF(clause) }
+      // } {
+      //   case _ => {
+      //     val indexTree =
+      //       Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+      //     splitWithIntPred(clause, clause, Some(indexTree))._1
+      //   }
+      // }
     } else {
       List(clause)
     }
