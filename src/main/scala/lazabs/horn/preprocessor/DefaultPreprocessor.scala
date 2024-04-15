@@ -37,6 +37,7 @@ import lazabs.horn.bottomup.HornClauses
 import lazabs.horn.global._
 import lazabs.horn.Util.Dag
 
+import java.io.{File, PrintWriter}
 import scala.collection.mutable.{HashSet => MHashSet, HashMap => MHashMap,
                                  LinkedHashSet, ArrayBuffer}
 
@@ -158,12 +159,22 @@ class DefaultPreprocessor extends HornPreprocessor {
       condenseClauses
 
     // Possibly split disjunctive clause constraints, and the condense again
-    if (GlobalParameters.get.splitClauses >= 1) {
-      val oldClauses = curClauses
-      applyStage(new BooleanClauseSplitter)
-      if (curClauses != oldClauses)
-        condenseClauses
-    }
+if (GlobalParameters.get.splitClauses >= 1) {
+  val oldClauses = curClauses
+  // val outputFile = new File("output.txt")
+  // val writer = new PrintWriter(outputFile)
+
+  // writer.println("Old clauses")
+  // oldClauses.map(_.toPrologString).foreach(writer.println)
+  applyStage(new BooleanClauseSplitter)
+  // writer.println("New clauses")
+  // curClauses.map(_.toPrologString).foreach(writer.println)
+  if (curClauses != oldClauses)
+    condenseClauses
+
+  // writer.close()
+  System.exit(0)
+}
     
     // Clone relation symbols with consistently concrete arguments
     {

@@ -270,8 +270,14 @@ class BooleanClauseSplitter extends HornPreprocessor {
       //       currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
       //     Timeout.raise
       // }
-      val method = 2
-      if (method == 2){
+      val Clause(headAtom, body, constraint) = clause
+      val conjuncts = LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
+      val (atomicConjs, compoundConjs) = conjuncts partition {
+        case LeafFormula(_) => true
+        case _              => false
+      }
+
+      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
         val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
           splitWithIntPred(clause, clause, Some(indexTree))._1
@@ -279,6 +285,15 @@ class BooleanClauseSplitter extends HornPreprocessor {
       else {
         fullDNF(clause)
       }
+      // val method = 2
+      // if (method == 2){
+      //   val indexTree =
+      //       Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+      //     splitWithIntPred(clause, clause, Some(indexTree))._1
+      // }
+      // else {
+      //   fullDNF(clause)
+      // }
             
       // Timeout.catchTimeout {
       //   Timeout.withChecker(checker _) { 
