@@ -164,11 +164,11 @@ if (GlobalParameters.get.splitClauses >= 1) {
   // val outputFile = new File("output.txt")
   // val writer = new PrintWriter(outputFile)
 
-  // writer.println("Old clauses")
-  // oldClauses.map(_.toPrologString).foreach(writer.println)
+  println("Old clauses")
+  oldClauses.map(_.toPrologString).foreach(println)
   applyStage(new BooleanClauseSplitter)
-  // writer.println("New clauses")
-  // curClauses.map(_.toPrologString).foreach(writer.println)
+  println("New clauses")
+  curClauses.map(_.toPrologString).foreach(println)
   if (curClauses != oldClauses)
     condenseClauses
 

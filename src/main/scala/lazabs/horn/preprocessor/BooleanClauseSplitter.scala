@@ -107,6 +107,35 @@ class BooleanClauseSplitter extends HornPreprocessor {
     }
     size
 }
+
+// private def splitWithPred(clause : Clause,
+//                                initialClause : Clause,
+//                                indexTree : Option[Tree[Int]])
+//                               (implicit p : SimpleAPI)
+//                             : (Seq[Clause]) = {
+//     val Clause(headAtom, body, constraint) = clause
+//     val negConstraint = Transform2NNF(~constraint)
+
+//       val conjuncts =
+//         LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
+//       val (atomicConjs, compoundConjs) = conjuncts partition {
+//         case LeafFormula(_) => true
+//         case _              => false
+//       }
+//     val leftConsts = new MHashSet[ConstantTerm]
+//         for (b <- body)
+//           leftConsts ++= (SymbolCollector constants b)
+
+//         val selectedConjs, remainingConjs = new ArrayBuffer[IFormula]
+//         remainingConjs ++= conjuncts
+//         for(r <- remainingConjs) {
+//           if (!(needsSplittingPos(r))){
+//             selectedConjs += r
+//             remainingConjs -= r
+//           }
+//         }
+//     }
+
   //////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -276,7 +305,6 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case LeafFormula(_) => true
         case _              => false
       }
-
       if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
         val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
