@@ -69,11 +69,16 @@ class BooleanClauseSplitter extends HornPreprocessor {
              : (Clauses, VerificationHints, BackTranslator) = {
 
     val newClauses = SimpleAPI.withProver { p =>
-      for (clause <- clauses;
-           newClause <- cleverSplit(clause)(p)) yield {
-        newClause
-      }
-    }
+  // Calculate the new clauses along with the total number of predicates
+  val (resultClauses, totalPredicates) = clauses.foldLeft((Seq.empty[Clause], 0)) {
+    case ((accClauses, accPredicates), clause) =>
+      val (newClause, currentNumOfPred) = moreCleverSplit(clause, accPredicates)(p)
+      (accClauses ++ newClause, accPredicates + currentNumOfPred)
+  }
+
+  // Return the new clauses
+  resultClauses
+}
 
     val translator =
       ClauseShortener.BTranslator.withIndexes(tempPredicates.toSet,
@@ -83,6 +88,29 @@ class BooleanClauseSplitter extends HornPreprocessor {
     clauseBackMapping.clear
 
     (newClauses, hints, translator)
+  }
+
+  private def moreCleverSplit(clause : Clause, totalPredicates : Int)
+                             (implicit p : SimpleAPI) : (Seq[Clause],Int) = {
+
+    if (needsSplittingPos(clause.constraint)) {
+      val Clause(headAtom, body, constraint) = clause
+      val conjuncts = LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
+      val (atomicConjs, compoundConjs) = conjuncts partition {
+        case LeafFormula(_) => true
+        case _              => false
+      }
+      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
+        val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+          splitWithIntPred(clause, clause, Some(indexTree))
+      }
+      else {
+        (fullDNF(clause),0)
+      }
+    } else {
+      (List(clause),0)
+    }
   }
 
   private def getSizeSubexpression(subexpression: IExpression): Int = {
@@ -158,7 +186,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case _              => false
       }
 
-      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000) {
+      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000) {
         // introduce a new predicate to split the clause into multiple
         // clauses, and this way avoid combinatorial explosion
 
@@ -305,7 +333,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case LeafFormula(_) => true
         case _              => false
       }
-      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
+      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
         val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
           splitWithIntPred(clause, clause, Some(indexTree))._1
