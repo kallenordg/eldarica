@@ -154,11 +154,11 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
     List()
 }
 
-private def predicateForDisjunctions(head : IAtom, constraint: List[IAtom], logic : IFormula)(implicit p: SimpleAPI): Clauses = {
+private def predicateForDisjunctions(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = {
   var clauses: Clauses = ArrayBuffer.empty[Clause]
-  var newBody = logic
-  if(findOrInstancesPos(logic) != List()) {
-    val listOfDisjunctions = findOrInstancesPos(logic)
+  var newBody = constraint
+  if(findOrInstancesPos(constraint) != List()) {
+    val listOfDisjunctions = findOrInstancesPos(constraint)
     for(disjunction <- listOfDisjunctions){
       val constants = SymbolCollector constantsSorted disjunction
       val sorts = constants map (Sort sortOf _)
@@ -168,27 +168,27 @@ private def predicateForDisjunctions(head : IAtom, constraint: List[IAtom], logi
       newBody = ExpressionReplacingVisitor(newBody, disjunction, intLit)
       clauses = clauses ++ predicateMaker(intLit, List(), disjunction)
     }
-    clauses =  clauses ++ Seq(Clause(head, constraint, newBody))
+    clauses =  clauses ++ Seq(Clause(head, body, newBody))
   }
   clauses
 
 }
 
 // split based on body predicates
-private def predicateMaker(head : IAtom, constraint: List[IAtom], logic : IFormula)(implicit p: SimpleAPI): Clauses = logic match{
+private def predicateMaker(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = constraint match{
   case IBinFormula(IBinJunctor.Or, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-      case (false, false) => Seq(Clause(head, constraint, f1), Clause(head, constraint, f2))
-      case (true, false) => predicateMaker(head, constraint, f1) ++ Seq(Clause(head, constraint, f2))
-      case (false, true) => Seq(Clause(head, constraint, f1)) ++ predicateMaker(head, constraint, f2)
-      case (true, true) => predicateMaker(head, constraint, f1) ++ predicateMaker(head, constraint, f2)
+      case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
+      case (true, false) => predicateMaker(head, body, f1) ++ Seq(Clause(head, body, f2))
+      case (false, true) => Seq(Clause(head, body, f1)) ++ predicateMaker(head, body, f2)
+      case (true, true) => predicateMaker(head, body, f1) ++ predicateMaker(head, body, f2)
     }
   case IBinFormula(IBinJunctor.And, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-      case (false, false) => Seq(Clause(head, constraint, logic))
-      case (true, false) => predicateForDisjunctions(head, constraint,f1) ++ Seq(Clause(head, constraint, f2))
-      case (false, true) => Seq(Clause(head, constraint, f1)) ++ predicateForDisjunctions(head, constraint, f2)
-      case (true, true) => predicateForDisjunctions(head, constraint, f1) ++ predicateForDisjunctions(head, constraint, f2)
+      case (false, false) => Seq(Clause(head, body, constraint))
+      case (true, false) => predicateForDisjunctions(head, body, constraint)
+      case (false, true) => predicateForDisjunctions(head, body, constraint)
+      case (true, true) => predicateForDisjunctions(head, body, f1) ++ predicateForDisjunctions(head, body, f2)
     }
   case _ => Seq.empty
 }
