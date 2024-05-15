@@ -43,6 +43,7 @@ import ap.util.{Seqs, Timeout}
 import ap.types.MonoSortedPredicate
 
 import scala.collection.mutable.{ArrayBuffer, LinkedHashSet, HashMap => MHashMap, HashSet => MHashSet}
+import scala.languageFeature.reflectiveCalls
 
 object BooleanClauseSplitter {
 
@@ -68,16 +69,13 @@ class BooleanClauseSplitter extends HornPreprocessor {
               frozenPredicates : Set[Predicate])
              : (Clauses, VerificationHints, BackTranslator) = {
 
-    val newClauses = SimpleAPI.withProver { p =>
-  // Calculate the new clauses along with the total number of predicates
-  val (resultClauses, totalPredicates) = clauses.foldLeft((Seq.empty[Clause], 0)) {
-    case ((accClauses, accPredicates), clause) =>
-      val (newClause, currentNumOfPred) = moreCleverSplit(clause, accPredicates)(p)
-      (accClauses ++ newClause, accPredicates + currentNumOfPred)
-  }
+     val newClauses = SimpleAPI.withProver { p =>
+      for (clause <- clauses;
+           newClause <- moreCleverSplit(clause)(p)) yield {
+        newClause
+      }
 
-  // Return the new clauses
-  resultClauses
+
 }
 
     val translator =
@@ -90,8 +88,8 @@ class BooleanClauseSplitter extends HornPreprocessor {
     (newClauses, hints, translator)
   }
 
-  private def moreCleverSplit(clause : Clause, totalPredicates : Int)
-                             (implicit p : SimpleAPI) : (Seq[Clause],Int) = {
+  private def moreCleverSplit(clause : Clause)
+                             (implicit p : SimpleAPI) : Seq[Clause] = {
 
     if (needsSplittingPos(clause.constraint)) {
       val Clause(headAtom, body, constraint) = clause
@@ -101,15 +99,13 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case _              => false
       }
       if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
-        val indexTree =
-            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-          splitWithIntPred(clause, clause, Some(indexTree))
+        predicateMaker(headAtom,body,constraint)
       }
       else {
-        (fullDNF(clause),0)
+        fullDNF(clause)
       }
     } else {
-      (List(clause),0)
+      List(clause)
     }
   }
 
@@ -136,33 +132,66 @@ class BooleanClauseSplitter extends HornPreprocessor {
     size
 }
 
-// private def splitWithPred(clause : Clause,
-//                                initialClause : Clause,
-//                                indexTree : Option[Tree[Int]])
-//                               (implicit p : SimpleAPI)
-//                             : (Seq[Clause]) = {
-//     val Clause(headAtom, body, constraint) = clause
-//     val negConstraint = Transform2NNF(~constraint)
+private def findOrInstancesPos(f: IFormula): List[IFormula] = f match {
+  case IBinFormula(IBinJunctor.Or, _, _) =>
+    List(f) 
+  case IBinFormula(IBinJunctor.And, f1, f2) =>
+    findOrInstancesPos(f1) ++ findOrInstancesPos(f2)
+  case INot(f1) =>
+    findOrInstancesNeg(f1)
+  case _ =>
+    List()
+}
 
-//       val conjuncts =
-//         LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
-//       val (atomicConjs, compoundConjs) = conjuncts partition {
-//         case LeafFormula(_) => true
-//         case _              => false
-//       }
-//     val leftConsts = new MHashSet[ConstantTerm]
-//         for (b <- body)
-//           leftConsts ++= (SymbolCollector constants b)
+private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
+  case IBinFormula(IBinJunctor.And, _, _) =>
+    List(f)
+  case IBinFormula(IBinJunctor.Or, f1, f2) =>
+    findOrInstancesNeg(f1) ++ findOrInstancesNeg(f2)
+  case INot(f1) =>
+    findOrInstancesPos(f1)
+  case _ =>
+    List()
+}
 
-//         val selectedConjs, remainingConjs = new ArrayBuffer[IFormula]
-//         remainingConjs ++= conjuncts
-//         for(r <- remainingConjs) {
-//           if (!(needsSplittingPos(r))){
-//             selectedConjs += r
-//             remainingConjs -= r
-//           }
-//         }
-//     }
+private def predicateForDisjunctions(head : IAtom, constraint: List[IAtom], logic : IFormula)(implicit p: SimpleAPI): Clauses = {
+  var clauses: Clauses = ArrayBuffer.empty[Clause]
+  var newBody = logic
+  if(findOrInstancesPos(logic) != List()) {
+    val listOfDisjunctions = findOrInstancesPos(logic)
+    for(disjunction <- listOfDisjunctions){
+      val constants = SymbolCollector constantsSorted disjunction
+      val sorts = constants map (Sort sortOf _)
+      val pred = MonoSortedPredicate("intPred" + symbolCounter, sorts)
+      symbolCounter = symbolCounter + 1
+      val intLit = IAtom(pred, constants)
+      newBody = ExpressionReplacingVisitor(newBody, disjunction, intLit)
+      clauses = clauses ++ predicateMaker(intLit, List(), disjunction)
+    }
+    clauses =  clauses ++ Seq(Clause(head, constraint, newBody))
+  }
+  clauses
+
+}
+
+// split based on body predicates
+private def predicateMaker(head : IAtom, constraint: List[IAtom], logic : IFormula)(implicit p: SimpleAPI): Clauses = logic match{
+  case IBinFormula(IBinJunctor.Or, f1, f2) =>
+    (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+      case (false, false) => Seq(Clause(head, constraint, f1), Clause(head, constraint, f2))
+      case (true, false) => predicateMaker(head, constraint, f1) ++ Seq(Clause(head, constraint, f2))
+      case (false, true) => Seq(Clause(head, constraint, f1)) ++ predicateMaker(head, constraint, f2)
+      case (true, true) => predicateMaker(head, constraint, f1) ++ predicateMaker(head, constraint, f2)
+    }
+  case IBinFormula(IBinJunctor.And, f1, f2) =>
+    (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+      case (false, false) => Seq(Clause(head, constraint, logic))
+      case (true, false) => predicateForDisjunctions(head, constraint,f1) ++ Seq(Clause(head, constraint, f2))
+      case (false, true) => Seq(Clause(head, constraint, f1)) ++ predicateForDisjunctions(head, constraint, f2)
+      case (true, true) => predicateForDisjunctions(head, constraint, f1) ++ predicateForDisjunctions(head, constraint, f2)
+    }
+  case _ => Seq.empty
+}
 
   //////////////////////////////////////////////////////////////////////////////
 
