@@ -99,7 +99,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case _              => false
       }
       if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
-        predicateMaker(headAtom,body,constraint)
+        clauseGenerator(headAtom,body,constraint)
       }
       else {
         fullDNF(clause)
@@ -153,8 +153,13 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
   case _ =>
     List()
 }
-
-private def predicateForDisjunctions(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = {
+/** Generates and introduces additional predicates when needed.
+  *
+  * Given the head, body and constraint of a clause and the clause being an instance of
+  * a conjunction containing disjunctions on either right or left hand side of the conjunction.
+  * The functions generates predicates for all instances of or-statements. 
+  */
+private def predicateGenerator(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = {
   var clauses: Clauses = ArrayBuffer.empty[Clause]
   var newBody = constraint
   if(findOrInstancesPos(constraint) != List()) {
@@ -166,7 +171,7 @@ private def predicateForDisjunctions(head : IAtom, body: List[IAtom], constraint
       symbolCounter = symbolCounter + 1
       val intLit = IAtom(pred, constants)
       newBody = ExpressionReplacingVisitor(newBody, disjunction, intLit)
-      clauses = clauses ++ predicateMaker(intLit, List(), disjunction)
+      clauses = clauses ++ clauseGenerator(intLit, List(), disjunction)
     }
     clauses =  clauses ++ Seq(Clause(head, body, newBody))
   }
@@ -174,21 +179,27 @@ private def predicateForDisjunctions(head : IAtom, body: List[IAtom], constraint
 
 }
 
-// split based on body predicates
-private def predicateMaker(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = constraint match{
+/** Generates clauses for handling disjunctions.
+  *
+  * Given the head, body and constraint of a clause, new clauses in relation
+  * to disjuncts and conjuncts are generated being equivalent to the
+  * original clause. In case of disjuncts the functions calls itself recursively
+  * and if the left or right hand side of a conjunct needs splitting, it's handled
+  * by another function.
+  */
+private def clauseGenerator(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = constraint match{
   case IBinFormula(IBinJunctor.Or, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
-      case (true, false) => predicateMaker(head, body, f1) ++ Seq(Clause(head, body, f2))
-      case (false, true) => Seq(Clause(head, body, f1)) ++ predicateMaker(head, body, f2)
-      case (true, true) => predicateMaker(head, body, f1) ++ predicateMaker(head, body, f2)
+      case (true, false) => clauseGenerator(head, body, f1) ++ Seq(Clause(head, body, f2))
+      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(head, body, f2)
+      case (true, true) => clauseGenerator(head, body, f1) ++ clauseGenerator(head, body, f2)
     }
   case IBinFormula(IBinJunctor.And, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, constraint))
-      case (true, false) => predicateForDisjunctions(head, body, constraint)
-      case (false, true) => predicateForDisjunctions(head, body, constraint)
-      case (true, true) => predicateForDisjunctions(head, body, f1) ++ predicateForDisjunctions(head, body, f2)
+      case (true, false) | (false, true)=> predicateGenerator(head, body, constraint)
+      case (true, true) => predicateGenerator(head, body, f1) ++ predicateGenerator(head, body, f2) // may need to be the same case as (true,false)|(false,true)
     }
   case _ => Seq.empty
 }
