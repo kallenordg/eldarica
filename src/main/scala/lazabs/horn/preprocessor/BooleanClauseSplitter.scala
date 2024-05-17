@@ -161,19 +161,22 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
   */
 private def predicateGenerator(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = {
   var clauses: Clauses = ArrayBuffer.empty[Clause]
-  var newBody = constraint
+  var predicates: List[IAtom] = List.empty[IAtom]
+  var constraintWithPredicates = constraint
   if(findOrInstancesPos(constraint) != List()) {
     val listOfDisjunctions = findOrInstancesPos(constraint)
     for(disjunction <- listOfDisjunctions){
       val constants = SymbolCollector constantsSorted disjunction
       val sorts = constants map (Sort sortOf _)
       val pred = MonoSortedPredicate("intPred" + symbolCounter, sorts)
+      tempPredicates += pred
       symbolCounter = symbolCounter + 1
       val intLit = IAtom(pred, constants)
-      newBody = ExpressionReplacingVisitor(newBody, disjunction, intLit)
+      constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
+      predicates = predicates ++ List(intLit)
       clauses = clauses ++ clauseGenerator(intLit, List(), disjunction)
     }
-    clauses =  clauses ++ Seq(Clause(head, body, newBody))
+    clauses =  clauses ++ Seq(Clause(head, body ++ predicates, constraintWithPredicates))
   }
   clauses
 
@@ -338,9 +341,9 @@ private def clauseGenerator(head : IAtom, body: List[IAtom], constraint : IFormu
     if (addBackMapping) {
       val indexTree =
         Tree(-1, (for (n <- 0 until body.size) yield Leaf(n)).toList)
-      for (newClause <- newClauses)
-        clauseBackMapping.put(newClause, (clause, indexTree))
-    }
+      for (newClause <- newClauses) 
+    clauseBackMapping.put(newClause, (clause, indexTree))
+}
 
     newClauses
   }
