@@ -69,14 +69,22 @@ class BooleanClauseSplitter extends HornPreprocessor {
               frozenPredicates : Set[Predicate])
              : (Clauses, VerificationHints, BackTranslator) = {
 
-     val newClauses = SimpleAPI.withProver { p =>
-      for (clause <- clauses;
-           newClause <- moreCleverSplit(clause)(p)) yield {
+     val method = 1
+     val newClauses = if (method == 2) {
+    SimpleAPI.withProver { p =>
+      for (clause <- clauses; newClause <- moreCleverSplit(clause)(p)) yield {
         newClause
       }
+    }
+  } else {
+    SimpleAPI.withProver { p =>
+      for (clause <- clauses; newClause <- cleverSplit(clause)(p)) yield {
+        newClause
+      }
+    }
+  }
 
 
-}
 
     val translator =
       ClauseShortener.BTranslator.withIndexes(tempPredicates.toSet,
@@ -98,8 +106,8 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case LeafFormula(_) => true
         case _              => false
       }
-      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
-        clauseGenerator(headAtom,body,constraint)
+      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
+        clauseGenerator(Clause(headAtom,body,constraint), clause)
       }
       else {
         fullDNF(clause)
@@ -159,7 +167,8 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
   * a conjunction containing disjunctions on either right or left hand side of the conjunction.
   * The functions generates predicates for all instances of or-statements. 
   */
-private def predicateGenerator(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = {
+private def predicateGenerator(clause:Clause, initialClause : Clause)(implicit p: SimpleAPI): Clauses = {
+  val Clause(head, body, constraint) = clause
   var clauses: Clauses = ArrayBuffer.empty[Clause]
   var predicates: List[IAtom] = List.empty[IAtom]
   var constraintWithPredicates = constraint
@@ -174,7 +183,7 @@ private def predicateGenerator(head : IAtom, body: List[IAtom], constraint : IFo
       val intLit = IAtom(pred, constants)
       constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
       predicates = predicates ++ List(intLit)
-      clauses = clauses ++ clauseGenerator(intLit, List(), disjunction)
+      clauses = clauses ++ clauseGenerator(Clause(intLit, List(), disjunction), initialClause)
     }
     clauses =  clauses ++ Seq(Clause(head, body ++ predicates, constraintWithPredicates))
   }
@@ -190,21 +199,24 @@ private def predicateGenerator(head : IAtom, body: List[IAtom], constraint : IFo
   * and if the left or right hand side of a conjunct needs splitting, it's handled
   * by another function.
   */
-private def clauseGenerator(head : IAtom, body: List[IAtom], constraint : IFormula)(implicit p: SimpleAPI): Clauses = constraint match{
-  case IBinFormula(IBinJunctor.Or, f1, f2) =>
+private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: SimpleAPI): Clauses = {
+  val Clause(head, body, constraint) = clause
+  constraint match {
+    case IBinFormula(IBinJunctor.Or, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
-      case (true, false) => clauseGenerator(head, body, f1) ++ Seq(Clause(head, body, f2))
-      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(head, body, f2)
-      case (true, true) => clauseGenerator(head, body, f1) ++ clauseGenerator(head, body, f2)
+      case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause) ++ Seq(Clause(head, body, f2))
+      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause)
+      case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause) ++ clauseGenerator(Clause(head, body, f2), initialClause)
     }
   case IBinFormula(IBinJunctor.And, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, constraint))
-      case (true, false) | (false, true)=> predicateGenerator(head, body, constraint)
-      case (true, true) => predicateGenerator(head, body, f1) ++ predicateGenerator(head, body, f2) // may need to be the same case as (true,false)|(false,true)
+      case (true, false) | (false, true)=> predicateGenerator(Clause(head, body, constraint), initialClause)
+      case (true, true) => predicateGenerator(Clause(head, body, f1), initialClause) ++ predicateGenerator(Clause(head, body, f2), initialClause) // may need to be the same case as (true,false)|(false,true)
     }
   case _ => Seq.empty
+  }
 }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -376,7 +388,7 @@ private def clauseGenerator(head : IAtom, body: List[IAtom], constraint : IFormu
         case LeafFormula(_) => true
         case _              => false
       }
-      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000){
+      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
         val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
           splitWithIntPred(clause, clause, Some(indexTree))._1
