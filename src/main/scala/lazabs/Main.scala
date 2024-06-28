@@ -136,6 +136,8 @@ class GlobalParameters extends Cloneable {
   var pngNo = true;
   var eogCEX = false;
   var showClauseGraph = false
+  var notCurrentImplementation = false;
+  var ver2 = false;
   var plainCEX = false;
   var simplifiedCEX = false;
   var cexInSMT = false;
@@ -227,6 +229,8 @@ class GlobalParameters extends Cloneable {
     that.pngNo = this.pngNo
     that.eogCEX = this.eogCEX
     that.showClauseGraph = this.showClauseGraph
+    that.notCurrentImplementation = this.notCurrentImplementation
+    that.ver2 = this.ver2
     that.plainCEX = this.plainCEX
     that.cexInSMT = this.cexInSMT
     that.simplifiedCEX = this.simplifiedCEX
@@ -506,6 +510,8 @@ object Main {
       case "-assert" :: rest => GlobalParameters.get.assertions = true; arguments(rest)
       case "-verifyInterpolants" :: rest => verifyInterpolants = true; arguments(rest)
       case "-clauseGraph" :: rest => showClauseGraph = true; arguments(rest)
+      case "-notCurrent" :: rest => notCurrentImplementation = true; arguments(rest)
+      case "-ver2" :: rest => ver2 = true; arguments(rest)
       case "-h" :: rest => println(greeting + "\n\nUsage: eld [options] file\n\n" +
           "General options:\n" +
           " -h                Show this information\n" +
