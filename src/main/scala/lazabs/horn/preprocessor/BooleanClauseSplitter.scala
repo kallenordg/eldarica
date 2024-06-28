@@ -65,14 +65,18 @@ class BooleanClauseSplitter extends HornPreprocessor {
   private val tempPredicates = new MHashSet[Predicate]
   private val clauseBackMapping = new MHashMap[Clause, (Clause, Tree[Int])]
 
-  def process(clauses : Clauses, hints : VerificationHints,
-              frozenPredicates : Set[Predicate])
-             : (Clauses, VerificationHints, BackTranslator) = {
+def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Predicate])
+           : (Clauses, VerificationHints, BackTranslator) = {
 
-     val method = 1
-     val newClauses = if (method == 2) {
+  val newClauses = if (lazabs.GlobalParameters.get.notCurrentImplementation) {
     SimpleAPI.withProver { p =>
       for (clause <- clauses; newClause <- moreCleverSplit(clause)(p)) yield {
+        newClause
+      }
+    }
+  } else if (lazabs.GlobalParameters.get.ver2) {
+    SimpleAPI.withProver { p =>
+      for (clause <- clauses; newClause <- cleverSplitver2(clause)(p)) yield {
         newClause
       }
     }
@@ -84,17 +88,15 @@ class BooleanClauseSplitter extends HornPreprocessor {
     }
   }
 
+  val translator =
+    ClauseShortener.BTranslator.withIndexes(tempPredicates.toSet,
+                                            clauseBackMapping.toMap)
 
+  tempPredicates.clear
+  clauseBackMapping.clear
 
-    val translator =
-      ClauseShortener.BTranslator.withIndexes(tempPredicates.toSet,
-                                              clauseBackMapping.toMap)
-
-    tempPredicates.clear
-    clauseBackMapping.clear
-
-    (newClauses, hints, translator)
-  }
+  (newClauses, hints, translator)
+}
 
   private def moreCleverSplit(clause : Clause)
                              (implicit p : SimpleAPI) : Seq[Clause] = {
@@ -106,12 +108,14 @@ class BooleanClauseSplitter extends HornPreprocessor {
         case LeafFormula(_) => true
         case _              => false
       }
-      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
-        clauseGenerator(Clause(headAtom,body,constraint), clause)
-      }
-      else {
-        fullDNF(clause)
-      }
+      // if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
+        val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+        clauseGenerator(clause, clause,Some(indexTree))
+      // }
+      // else {
+        // fullDNF(clause)
+      // }
     } else {
       List(clause)
     }
@@ -167,7 +171,7 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
   * a conjunction containing disjunctions on either right or left hand side of the conjunction.
   * The functions generates predicates for all instances of or-statements. 
   */
-private def predicateGenerator(clause:Clause, initialClause : Clause)(implicit p: SimpleAPI): Clauses = {
+private def predicateGenerator(clause:Clause, initialClause : Clause,indexTree : Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
   val Clause(head, body, constraint) = clause
   var clauses: Clauses = ArrayBuffer.empty[Clause]
   var predicates: List[IAtom] = List.empty[IAtom]
@@ -183,9 +187,12 @@ private def predicateGenerator(clause:Clause, initialClause : Clause)(implicit p
       val intLit = IAtom(pred, constants)
       constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
       predicates = predicates ++ List(intLit)
-      clauses = clauses ++ clauseGenerator(Clause(intLit, List(), disjunction), initialClause)
+      clauses = clauses ++ clauseGenerator(Clause(intLit, List(), disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
     }
-    clauses =  clauses ++ Seq(Clause(head, body ++ predicates, constraintWithPredicates))
+    
+    // for (predicate <- predicates){
+      clauses =  clauses ++ Seq(Clause(head, body ++ predicates, constraintWithPredicates))
+    // }
   }
   clauses
 
@@ -199,21 +206,27 @@ private def predicateGenerator(clause:Clause, initialClause : Clause)(implicit p
   * and if the left or right hand side of a conjunct needs splitting, it's handled
   * by another function.
   */
-private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: SimpleAPI): Clauses = {
+private def clauseGenerator(clause: Clause, initialClause: Clause,indexTree : Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
   val Clause(head, body, constraint) = clause
   constraint match {
     case IBinFormula(IBinJunctor.Or, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
-      case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause) ++ Seq(Clause(head, body, f2))
-      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause)
-      case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause) ++ clauseGenerator(Clause(head, body, f2), initialClause)
+      case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ Seq(Clause(head, body, f2))
+      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
+      case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
     }
   case IBinFormula(IBinJunctor.And, f1, f2) =>
     (needsSplittingPos(f1), needsSplittingPos(f2)) match {
       case (false, false) => Seq(Clause(head, body, constraint))
-      case (true, false) | (false, true)=> predicateGenerator(Clause(head, body, constraint), initialClause)
-      case (true, true) => predicateGenerator(Clause(head, body, f1), initialClause) ++ predicateGenerator(Clause(head, body, f2), initialClause) // may need to be the same case as (true,false)|(false,true)
+      case (true, false) | (false, true)=> predicateGenerator(Clause(head, body, constraint), initialClause, indexTree)
+      case (true, true) =>
+        val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause,indexTree)
+        val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause,indexTree)
+        val newClauseHead = clauses1.last.head
+        val newClauseBody = clauses1.last.body ++ clauses2.last.body
+        val newClause = Clause(newClauseHead, newClauseBody, i(true))
+        clauses1.init ++ clauses2.init ++ Seq(newClause)
     }
   case _ => Seq.empty
   }
@@ -241,7 +254,7 @@ private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: S
         case _              => false
       }
 
-      if (compoundConjs.size > 3 || getSize(compoundConjs) > 1000) {
+      if (compoundConjs.size > 8) {
         // introduce a new predicate to split the clause into multiple
         // clauses, and this way avoid combinatorial explosion
 
@@ -310,6 +323,22 @@ private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: S
       }
   }
 
+private def splitWithNoPred(clause : Clause,
+                               initialClause : Clause,
+                               indexTree : Option[Tree[Int]])
+                              (implicit p : SimpleAPI)
+                            : (Seq[Clause], Int) = {
+        Timeout.withChecker(GlobalParameters.get.timeoutChecker) {
+          val newClauses = fullDNF(clause, false)
+          for (it <- indexTree) {
+            for (newClause <- newClauses)
+              clauseBackMapping.put(newClause, (initialClause, it))
+          }
+          (newClauses, 0)
+        }
+      
+  }
+
   private def fullDNF(clause : Clause, addBackMapping : Boolean = true)
                      (implicit p : SimpleAPI) : Seq[Clause] = {
     val Clause(headAtom, body, constraint) = clause
@@ -363,7 +392,7 @@ private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: S
   private val globalStartTime = System.currentTimeMillis
   private var clauseGraphCounter = 0
 
-  private def cleverSplit(clause : Clause)
+  private def cleverSplitver2(clause : Clause)
                          (implicit p : SimpleAPI) : Seq[Clause] = {
 
     if(lazabs.GlobalParameters.get.showClauseGraph) {
@@ -374,52 +403,62 @@ private def clauseGenerator(clause: Clause, initialClause: Clause)(implicit p: S
 
     if (needsSplittingPos(clause.constraint)) {
       // first try the full splitting, but this might sometimes explode
-      // val startTime = System.currentTimeMillis
-      // def checker() : Unit = {
-      //   GlobalParameters.get.timeoutChecker
-      //   val currentTime = System.currentTimeMillis
-      //   if (currentTime - startTime > SPLITTING_TO ||
-      //       currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
-      //     Timeout.raise
-      // }
-      val Clause(headAtom, body, constraint) = clause
-      val conjuncts = LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
-      val (atomicConjs, compoundConjs) = conjuncts partition {
-        case LeafFormula(_) => true
-        case _              => false
+      val startTime = System.currentTimeMillis
+      def checker() : Unit = {
+        GlobalParameters.get.timeoutChecker
+        val currentTime = System.currentTimeMillis
+        if (currentTime - startTime > SPLITTING_TO ||
+            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+          Timeout.raise
       }
-      if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
-        val indexTree =
+
+      Timeout.catchTimeout {
+        Timeout.withChecker(checker _) { fullDNF(clause) }
+      } {
+        case _ => {
+          val indexTree =
             Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-          splitWithIntPred(clause, clause, Some(indexTree))._1
+          splitWithNoPred(clause, clause, Some(indexTree))._1
+        }
       }
-      else {
-        fullDNF(clause)
-      }
-      // val method = 2
-      // if (method == 2){
+    } else {
+      List(clause)
+    }
+
+   
+      // if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
       //   val indexTree =
       //       Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
       //     splitWithIntPred(clause, clause, Some(indexTree))._1
       // }
       // else {
-      //   fullDNF(clause)
-      // }
-            
-      // Timeout.catchTimeout {
-      //   Timeout.withChecker(checker _) { 
-      //     fullDNF(clause) }
-      // } {
-      //   case _ => {
-      //     val indexTree =
-      //       Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-      //     splitWithIntPred(clause, clause, Some(indexTree))._1
-      //   }
-      // }
+  }
+
+    private def cleverSplit(clause : Clause)
+                         (implicit p : SimpleAPI) : Seq[Clause] =
+    if (needsSplittingPos(clause.constraint)) {
+      // first try the full splitting, but this might sometimes explode
+      val startTime = System.currentTimeMillis
+      def checker() : Unit = {
+        GlobalParameters.get.timeoutChecker
+        val currentTime = System.currentTimeMillis
+        if (currentTime - startTime > SPLITTING_TO ||
+            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+          Timeout.raise
+      }
+
+      Timeout.catchTimeout {
+        Timeout.withChecker(checker _) { fullDNF(clause) }
+      } {
+        case _ => {
+          val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+          splitWithIntPred(clause, clause, Some(indexTree))._1
+        }
+      }
     } else {
       List(clause)
     }
-  }
 
   //////////////////////////////////////////////////////////////////////////////
 
