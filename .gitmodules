@@ -1,0 +1,3 @@
+[submodule "chc-comp22-benchmarks"]
+	path = chc-comp22-benchmarks
+	url = git@github.com:chc-comp/chc-comp22-benchmarks.git
