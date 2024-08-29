@@ -41,6 +41,7 @@ import ap.parser._
 import IExpression._
 import ap.util.{Seqs, Timeout}
 import ap.types.MonoSortedPredicate
+import java.io.{File, PrintWriter, FileWriter}
 
 import scala.collection.mutable.{ArrayBuffer, LinkedHashSet, HashMap => MHashMap, HashSet => MHashSet}
 import scala.languageFeature.reflectiveCalls
@@ -98,28 +99,22 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
   (newClauses, hints, translator)
 }
 
-  private def moreCleverSplit(clause : Clause)
-                             (implicit p : SimpleAPI) : Seq[Clause] = {
-
-    if (needsSplittingPos(clause.constraint)) {
-      val Clause(headAtom, body, constraint) = clause
-      val conjuncts = LineariseVisitor(Transform2NNF(constraint), IBinJunctor.And)
-      val (atomicConjs, compoundConjs) = conjuncts partition {
-        case LeafFormula(_) => true
-        case _              => false
-      }
-      // if (compoundConjs.size > 8 || getSize(compoundConjs) > 1000){
-        val indexTree =
-            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-        clauseGenerator(clause, clause,Some(indexTree))
-      // }
-      // else {
-        // fullDNF(clause)
-      // }
-    } else {
-      List(clause)
-    }
+  private def moreCleverSplit(clause: Clause)
+                           (implicit p: SimpleAPI): Seq[Clause] = {
+  if (needsSplittingPos(clause.constraint)) p.scope {
+    import p._
+    val Clause(headAtom, body, constraint) = clause
+    addConstantsRaw(SymbolCollector.constantsSorted(constraint))
+    val disjuncts = asIFormula(asConjunction(constraint))
+    val newConstraint = disjuncts
+    val newClause = new Clause(headAtom, body, newConstraint)
+    val indexTree =
+      Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+    clauseGenerator(newClause, newClause, Some(indexTree))
+  } else {
+    List(clause)
   }
+}
 
   private def getSizeSubexpression(subexpression: IExpression): Int = {
     var count = 0
@@ -173,11 +168,12 @@ private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
   */
 private def predicateGenerator(clause:Clause, initialClause : Clause,indexTree : Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
   val Clause(head, body, constraint) = clause
+  val newConstraint = Transform2NNF(constraint)
   var clauses: Clauses = ArrayBuffer.empty[Clause]
   var predicates: List[IAtom] = List.empty[IAtom]
-  var constraintWithPredicates = constraint
-  if(findOrInstancesPos(constraint) != List()) {
-    val listOfDisjunctions = findOrInstancesPos(constraint)
+  var constraintWithPredicates = newConstraint //constraint
+  if(findOrInstancesPos(newConstraint) != List()) { //constraint
+    val listOfDisjunctions = findOrInstancesPos(newConstraint) //constraint
     for(disjunction <- listOfDisjunctions){
       val constants = SymbolCollector constantsSorted disjunction
       val sorts = constants map (Sort sortOf _)
@@ -185,13 +181,13 @@ private def predicateGenerator(clause:Clause, initialClause : Clause,indexTree :
       tempPredicates += pred
       symbolCounter = symbolCounter + 1
       val intLit = IAtom(pred, constants)
-      constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
+      constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true) 
       predicates = predicates ++ List(intLit)
-      clauses = clauses ++ clauseGenerator(Clause(intLit, List(), disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
+      clauses = clauses ++ clauseGenerator(Clause(intLit, body, disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
     }
     
     // for (predicate <- predicates){
-      clauses =  clauses ++ Seq(Clause(head, body ++ predicates, constraintWithPredicates))
+      clauses =  clauses ++ Seq(Clause(head, predicates, constraintWithPredicates))
     // }
   }
   clauses
@@ -206,29 +202,33 @@ private def predicateGenerator(clause:Clause, initialClause : Clause,indexTree :
   * and if the left or right hand side of a conjunct needs splitting, it's handled
   * by another function.
   */
-private def clauseGenerator(clause: Clause, initialClause: Clause,indexTree : Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
+private def clauseGenerator(clause: Clause, initialClause: Clause, indexTree: Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
   val Clause(head, body, constraint) = clause
   constraint match {
     case IBinFormula(IBinJunctor.Or, f1, f2) =>
-    (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-      case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
-      case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ Seq(Clause(head, body, f2))
-      case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
-      case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
-    }
-  case IBinFormula(IBinJunctor.And, f1, f2) =>
-    (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-      case (false, false) => Seq(Clause(head, body, constraint))
-      case (true, false) | (false, true)=> predicateGenerator(Clause(head, body, constraint), initialClause, indexTree)
-      case (true, true) =>
-        val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause,indexTree)
-        val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause,indexTree)
-        val newClauseHead = clauses1.last.head
-        val newClauseBody = clauses1.last.body ++ clauses2.last.body
-        val newClause = Clause(newClauseHead, newClauseBody, i(true))
-        clauses1.init ++ clauses2.init ++ Seq(newClause)
-    }
-  case _ => Seq.empty
+      (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+        case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
+        case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ Seq(Clause(head, body, f2))
+        case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
+        case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
+      }
+    case IBinFormula(IBinJunctor.And, f1, f2) =>
+      (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+        case (false, false) => Seq(Clause(head, body, constraint))
+        case (true, false) | (false, true) => 
+          predicateGenerator(Clause(head, body, constraint), initialClause, indexTree)
+        case (true, true) =>
+          val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause, indexTree)
+          val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause, indexTree)
+          val newClauseHead = clauses1.last.head
+          val newClauseBody = clauses1.last.body ++ clauses2.last.body
+          val newClause = Clause(newClauseHead, newClauseBody, i(true))
+          clauses1.init ++ clauses2.init ++ Seq(newClause)
+      }
+    case INot(f1) =>
+      clauseGenerator(Clause(head, body, Transform2NNF(constraint)), initialClause,indexTree)
+    case _ => 
+      Seq.empty
   }
 }
 
@@ -434,31 +434,34 @@ private def splitWithNoPred(clause : Clause,
       // else {
   }
 
-    private def cleverSplit(clause : Clause)
-                         (implicit p : SimpleAPI) : Seq[Clause] =
-    if (needsSplittingPos(clause.constraint)) {
-      // first try the full splitting, but this might sometimes explode
-      val startTime = System.currentTimeMillis
-      def checker() : Unit = {
-        GlobalParameters.get.timeoutChecker
-        val currentTime = System.currentTimeMillis
-        if (currentTime - startTime > SPLITTING_TO ||
-            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
-          Timeout.raise
-      }
-
-      Timeout.catchTimeout {
-        Timeout.withChecker(checker _) { fullDNF(clause) }
-      } {
-        case _ => {
-          val indexTree =
-            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-          splitWithIntPred(clause, clause, Some(indexTree))._1
-        }
-      }
-    } else {
-      List(clause)
+private def cleverSplit(clause: Clause)(implicit p: SimpleAPI): Seq[Clause] = {
+  if (needsSplittingPos(clause.constraint)) {
+    // First, try the full splitting, but this might sometimes explode
+    val startTime = System.currentTimeMillis
+    def checker(): Unit = {
+      GlobalParameters.get.timeoutChecker
+      val currentTime = System.currentTimeMillis
+      if (currentTime - startTime > SPLITTING_TO ||
+          currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+        Timeout.raise
     }
+
+    Timeout.catchTimeout {
+      Timeout.withChecker(checker _) {
+        fullDNF(clause)
+      }
+    } {
+      case _ => {
+        val indexTree =
+          Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+        splitWithIntPred(clause, clause, Some(indexTree))._1
+      }
+    }
+  } else {
+    List(clause)
+  }
+}
+
 
   //////////////////////////////////////////////////////////////////////////////
 
