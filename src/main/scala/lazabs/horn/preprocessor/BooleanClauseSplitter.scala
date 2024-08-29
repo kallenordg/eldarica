@@ -100,21 +100,30 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
 }
 
   private def moreCleverSplit(clause: Clause)
-                           (implicit p: SimpleAPI): Seq[Clause] = {
-  if (needsSplittingPos(clause.constraint)) p.scope {
-    import p._
-    val Clause(headAtom, body, constraint) = clause
-    addConstantsRaw(SymbolCollector.constantsSorted(constraint))
-    val disjuncts = asIFormula(asConjunction(constraint))
-    val newConstraint = disjuncts
-    val newClause = new Clause(headAtom, body, newConstraint)
-    val indexTree =
-      Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-    clauseGenerator(newClause, newClause, Some(indexTree))
-  } else {
-    List(clause)
+                             (implicit p: SimpleAPI): Seq[Clause] = {
+    val conjuncts =
+      LineariseVisitor(clause.constraint, IBinJunctor.And)
+    val (presConjuncts, otherConjuncts) =
+      conjuncts partition(ContainsSymbol isPresburger _)
+
+    if (presConjuncts exists needsSplittingPos) p.scope {
+      import p._
+      val presConstraint  = and(presConjuncts)
+      val otherConstraint = and(otherConjuncts)
+      addConstantsRaw(SymbolCollector constantsSorted presConstraint)
+      val disjuncts =
+        PresburgerTools.nonDNFEnumDisjuncts(asConjunction(presConstraint)).toList
+      if (disjuncts.length > 1) {
+        val newClause = Clause(clause.head, clause.body,
+                               otherConstraint &&&
+                               IExpression.or(disjuncts.filter(d => !d.isFalse)
+                                                       .map(asIFormula)))
+        val indexTree =
+          Tree(-1, (for (n <- clause.body.indices) yield Leaf(n)).toList)
+        clauseGenerator(newClause, newClause, Some(indexTree))
+      } else List(clause)
+    } else List(clause)
   }
-}
 
   private def getSizeSubexpression(subexpression: IExpression): Int = {
     var count = 0
@@ -446,17 +455,18 @@ private def cleverSplit(clause: Clause)(implicit p: SimpleAPI): Seq[Clause] = {
         Timeout.raise
     }
 
-    Timeout.catchTimeout {
-      Timeout.withChecker(checker _) {
+   // Timeout.catchTimeout {
+   //   Timeout.withChecker(checker _) {
         fullDNF(clause)
-      }
-    } {
-      case _ => {
-        val indexTree =
-          Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-        splitWithIntPred(clause, clause, Some(indexTree))._1
-      }
-    }
+    //  }
+  //  }
+//    {
+//      case _ => {
+//        val indexTree =
+//          Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+//        splitWithIntPred(clause, clause, Some(indexTree))._1
+//      }
+//    }
   } else {
     List(clause)
   }
