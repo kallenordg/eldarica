@@ -100,29 +100,19 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
 }
 
   private def moreCleverSplit(clause: Clause)
-                             (implicit p: SimpleAPI): Seq[Clause] = {
-    val conjuncts =
-      LineariseVisitor(clause.constraint, IBinJunctor.And)
-    val (presConjuncts, otherConjuncts) =
-      conjuncts partition(ContainsSymbol isPresburger _)
+                             (implicit p: SimpleAPI): Seq[Clause] = p.scope {
+    import p._
+    addConstantsRaw(SymbolCollector constantsSorted clause.constraint)
+    val simpConstraint = simplify(clause.constraint)
 
-    if (presConjuncts exists needsSplittingPos) p.scope {
-      import p._
-      val presConstraint  = and(presConjuncts)
-      val otherConstraint = and(otherConjuncts)
-      addConstantsRaw(SymbolCollector constantsSorted presConstraint)
-      val disjuncts =
-        PresburgerTools.nonDNFEnumDisjuncts(asConjunction(presConstraint)).toList
-      if (disjuncts.length > 1) {
-        val newClause = Clause(clause.head, clause.body,
-                               otherConstraint &&&
-                               IExpression.or(disjuncts.filter(d => !d.isFalse)
-                                                       .map(asIFormula)))
-        val indexTree =
-          Tree(-1, (for (n <- clause.body.indices) yield Leaf(n)).toList)
-        clauseGenerator(newClause, newClause, Some(indexTree))
-      } else List(clause)
-    } else List(clause)
+    if (needsSplittingPos(simpConstraint)) {
+      val simpClause = Clause(clause.head, clause.body, simpConstraint)
+      val indexTree =
+        Tree(-1, (for (n <- clause.body.indices) yield Leaf(n)).toList)
+      clauseGenerator(simpClause, simpClause, Some(indexTree))
+    } else {
+      List(clause)
+    }
   }
 
   private def getSizeSubexpression(subexpression: IExpression): Int = {
@@ -148,98 +138,100 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
     size
 }
 
-private def findOrInstancesPos(f: IFormula): List[IFormula] = f match {
-  case IBinFormula(IBinJunctor.Or, _, _) =>
-    List(f) 
-  case IBinFormula(IBinJunctor.And, f1, f2) =>
-    findOrInstancesPos(f1) ++ findOrInstancesPos(f2)
-  case INot(f1) =>
-    findOrInstancesNeg(f1)
-  case _ =>
-    List()
-}
-
-private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
-  case IBinFormula(IBinJunctor.And, _, _) =>
-    List(f)
-  case IBinFormula(IBinJunctor.Or, f1, f2) =>
-    findOrInstancesNeg(f1) ++ findOrInstancesNeg(f2)
-  case INot(f1) =>
-    findOrInstancesPos(f1)
-  case _ =>
-    List()
-}
-/** Generates and introduces additional predicates when needed.
-  *
-  * Given the head, body and constraint of a clause and the clause being an instance of
-  * a conjunction containing disjunctions on either right or left hand side of the conjunction.
-  * The functions generates predicates for all instances of or-statements. 
-  */
-private def predicateGenerator(clause:Clause, initialClause : Clause,indexTree : Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
-  val Clause(head, body, constraint) = clause
-  val newConstraint = Transform2NNF(constraint)
-  var clauses: Clauses = ArrayBuffer.empty[Clause]
-  var predicates: List[IAtom] = List.empty[IAtom]
-  var constraintWithPredicates = newConstraint //constraint
-  if(findOrInstancesPos(newConstraint) != List()) { //constraint
-    val listOfDisjunctions = findOrInstancesPos(newConstraint) //constraint
-    for(disjunction <- listOfDisjunctions){
-      val constants = SymbolCollector constantsSorted disjunction
-      val sorts = constants map (Sort sortOf _)
-      val pred = MonoSortedPredicate("intPred" + symbolCounter, sorts)
-      tempPredicates += pred
-      symbolCounter = symbolCounter + 1
-      val intLit = IAtom(pred, constants)
-      constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true) 
-      predicates = predicates ++ List(intLit)
-      clauses = clauses ++ clauseGenerator(Clause(intLit, body, disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
-    }
-    
-    // for (predicate <- predicates){
-      clauses =  clauses ++ Seq(Clause(head, predicates, constraintWithPredicates))
-    // }
-  }
-  clauses
-
-}
-
-/** Generates clauses for handling disjunctions.
-  *
-  * Given the head, body and constraint of a clause, new clauses in relation
-  * to disjuncts and conjuncts are generated being equivalent to the
-  * original clause. In case of disjuncts the functions calls itself recursively
-  * and if the left or right hand side of a conjunct needs splitting, it's handled
-  * by another function.
-  */
-private def clauseGenerator(clause: Clause, initialClause: Clause, indexTree: Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
-  val Clause(head, body, constraint) = clause
-  constraint match {
-    case IBinFormula(IBinJunctor.Or, f1, f2) =>
-      (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-        case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
-        case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ Seq(Clause(head, body, f2))
-        case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
-        case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
-      }
+  private def findOrInstancesPos(f: IFormula): List[IFormula] = f match {
+    case IBinFormula(IBinJunctor.Or, _, _) =>
+      List(f)
     case IBinFormula(IBinJunctor.And, f1, f2) =>
-      (needsSplittingPos(f1), needsSplittingPos(f2)) match {
-        case (false, false) => Seq(Clause(head, body, constraint))
-        case (true, false) | (false, true) => 
-          predicateGenerator(Clause(head, body, constraint), initialClause, indexTree)
-        case (true, true) =>
-          val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause, indexTree)
-          val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause, indexTree)
-          val newClauseHead = clauses1.last.head
-          val newClauseBody = clauses1.last.body ++ clauses2.last.body
-          val newClause = Clause(newClauseHead, newClauseBody, i(true))
-          clauses1.init ++ clauses2.init ++ Seq(newClause)
-      }
+      findOrInstancesPos(f1) ++ findOrInstancesPos(f2)
     case INot(f1) =>
-      clauseGenerator(Clause(head, body, Transform2NNF(constraint)), initialClause,indexTree)
-    case _ => 
-      Seq.empty
+      findOrInstancesNeg(f1)
+    case _ =>
+      List()
   }
-}
+
+  private def findOrInstancesNeg(f: IFormula): List[IFormula] = f match {
+    case IBinFormula(IBinJunctor.And, _, _) =>
+      List(f)
+    case IBinFormula(IBinJunctor.Or, f1, f2) =>
+      findOrInstancesNeg(f1) ++ findOrInstancesNeg(f2)
+    case INot(f1) =>
+      findOrInstancesPos(f1)
+    case _ =>
+      List()
+  }
+  /** Generates and introduces additional predicates when needed.
+   *
+   * Given the head, body and constraint of a clause and the clause being an instance of
+   * a conjunction containing disjunctions on either right or left hand side of the conjunction.
+   * The functions generates predicates for all instances of or-statements.
+   */
+  private def predicateGenerator(clause : Clause,
+                                 initialClause : Clause,
+                                 indexTree : Option[Tree[Int]])
+                                (implicit p : SimpleAPI) : Clauses = {
+    val Clause(head, body, constraint) = clause
+    val newConstraint = Transform2NNF(constraint)
+    var clauses: Clauses = ArrayBuffer.empty[Clause]
+    var predicates: List[IAtom] = List.empty[IAtom]
+    var constraintWithPredicates = newConstraint //constraint
+    if(findOrInstancesPos(newConstraint) != List()) { //constraint
+      val listOfDisjunctions = findOrInstancesPos(newConstraint) //constraint
+      for(disjunction <- listOfDisjunctions){
+        val constants = SymbolCollector constantsSorted disjunction
+        val sorts = constants map (Sort sortOf _)
+        val pred = MonoSortedPredicate("intPred" + symbolCounter, sorts)
+        tempPredicates += pred
+        symbolCounter = symbolCounter + 1
+        val intLit = IAtom(pred, constants)
+        constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
+        predicates = predicates ++ List(intLit)
+        clauses = clauses ++ clauseGenerator(Clause(intLit, body, disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
+      }
+
+      // for (predicate <- predicates){
+      clauses =  clauses ++ Seq(Clause(head, predicates, constraintWithPredicates))
+      // }
+    }
+    clauses
+  }
+
+  /** Generates clauses for handling disjunctions.
+   *
+   * Given the head, body and constraint of a clause, new clauses in relation
+   * to disjuncts and conjuncts are generated being equivalent to the
+   * original clause. In case of disjuncts the functions calls itself recursively
+   * and if the left or right hand side of a conjunct needs splitting, it's handled
+   * by another function.
+   */
+  private def clauseGenerator(clause: Clause, initialClause: Clause, indexTree: Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
+    val Clause(head, body, constraint) = clause
+    constraint match {
+      case Disj(f1, f2) =>
+        (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+          case (false, false) => Seq(Clause(head, body, f1), Clause(head, body, f2))
+          case (true, false) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ Seq(Clause(head, body, f2))
+          case (false, true) => Seq(Clause(head, body, f1)) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
+          case (true, true) => clauseGenerator(Clause(head, body, f1), initialClause, indexTree) ++ clauseGenerator(Clause(head, body, f2), initialClause, indexTree)
+        }
+      case Conj(f1, f2) =>
+        (needsSplittingPos(f1), needsSplittingPos(f2)) match {
+          case (false, false) => Seq(Clause(head, body, constraint))
+          case (true, false) | (false, true) =>
+            predicateGenerator(Clause(head, body, constraint), initialClause, indexTree)
+          case (true, true) =>
+            val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause, indexTree)
+            val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause, indexTree)
+            val newClauseHead = clauses1.last.head
+            val newClauseBody = clauses1.last.body ++ clauses2.last.body
+            val newClause = Clause(newClauseHead, newClauseBody, i(true))
+            clauses1.init ++ clauses2.init ++ Seq(newClause)
+        }
+      case INot(f1) =>
+        clauseGenerator(Clause(head, body, Transform2NNF(constraint)), initialClause,indexTree)
+      case _ =>
+        Seq.empty
+    }
+  }
 
   //////////////////////////////////////////////////////////////////////////////
 
@@ -345,8 +337,8 @@ private def splitWithNoPred(clause : Clause,
           }
           (newClauses, 0)
         }
-      
-  }
+
+}
 
   private def fullDNF(clause : Clause, addBackMapping : Boolean = true)
                      (implicit p : SimpleAPI) : Seq[Clause] = {
@@ -391,9 +383,9 @@ private def splitWithNoPred(clause : Clause,
     if (addBackMapping) {
       val indexTree =
         Tree(-1, (for (n <- 0 until body.size) yield Leaf(n)).toList)
-      for (newClause <- newClauses) 
-    clauseBackMapping.put(newClause, (clause, indexTree))
-}
+      for (newClause <- newClauses)
+        clauseBackMapping.put(newClause, (clause, indexTree))
+    }
 
     newClauses
   }
@@ -443,34 +435,34 @@ private def splitWithNoPred(clause : Clause,
       // else {
   }
 
-private def cleverSplit(clause: Clause)(implicit p: SimpleAPI): Seq[Clause] = {
-  if (needsSplittingPos(clause.constraint)) {
-    // First, try the full splitting, but this might sometimes explode
-    val startTime = System.currentTimeMillis
-    def checker(): Unit = {
-      GlobalParameters.get.timeoutChecker
-      val currentTime = System.currentTimeMillis
-      if (currentTime - startTime > SPLITTING_TO ||
-          currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
-        Timeout.raise
-    }
+  private def cleverSplit(clause: Clause)(implicit p: SimpleAPI): Seq[Clause] = {
+    if (needsSplittingPos(clause.constraint)) {
+      // First, try the full splitting, but this might sometimes explode
+      val startTime = System.currentTimeMillis
+      def checker(): Unit = {
+        GlobalParameters.get.timeoutChecker
+        val currentTime = System.currentTimeMillis
+        if (currentTime - startTime > SPLITTING_TO ||
+            currentTime - globalStartTime > GLOBAL_SPLITTING_TO)
+          Timeout.raise
+      }
 
-   // Timeout.catchTimeout {
-   //   Timeout.withChecker(checker _) {
-        fullDNF(clause)
-    //  }
-  //  }
-//    {
-//      case _ => {
-//        val indexTree =
-//          Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
-//        splitWithIntPred(clause, clause, Some(indexTree))._1
-//      }
-//    }
-  } else {
-    List(clause)
+      Timeout.catchTimeout {
+        Timeout.withChecker(checker _) {
+          fullDNF(clause)
+        }
+      }
+      {
+        case _ => {
+          val indexTree =
+            Tree(-1, (for (n <- 0 until clause.body.size) yield Leaf(n)).toList)
+          splitWithIntPred(clause, clause, Some(indexTree))._1
+        }
+      }
+    } else {
+      List(clause)
+    }
   }
-}
 
 
   //////////////////////////////////////////////////////////////////////////////
