@@ -110,14 +110,12 @@ private def moreCleverSplit(clause: Clause)
 
     // File setup for appending results
     // val outputFile = new File("simpClause_results_12.txt")
-    // val fileWriter = new FileWriter(outputFile, true)  // Append mode
+    // val fileWriter = new FileWriter(outputFile, true)
     // val writer = new PrintWriter(fileWriter)
 
-    // // Writing simpClause to the file
     // writer.println("Simplified Clause:")
-    // writer.println(simpClause.toPrologString)  // Assuming `toPrologString` formats it correctly
+    // writer.println(simpClause.toPrologString) 
     
-    // // Don't forget to close the writer
     // writer.close()
 
     val indexTree =
