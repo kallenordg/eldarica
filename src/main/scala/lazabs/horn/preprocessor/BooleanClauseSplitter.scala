@@ -99,21 +99,34 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
   (newClauses, hints, translator)
 }
 
-  private def moreCleverSplit(clause: Clause)
-                             (implicit p: SimpleAPI): Seq[Clause] = p.scope {
-    import p._
-    addConstantsRaw(SymbolCollector constantsSorted clause.constraint)
-    val simpConstraint = simplify(clause.constraint)
+private def moreCleverSplit(clause: Clause)
+                           (implicit p: SimpleAPI): Seq[Clause] = p.scope {
+  import p._
+  addConstantsRaw(SymbolCollector constantsSorted clause.constraint)
+  val simpConstraint = simplify(clause.constraint)
 
-    if (needsSplittingPos(simpConstraint)) {
-      val simpClause = Clause(clause.head, clause.body, simpConstraint)
-      val indexTree =
-        Tree(-1, (for (n <- clause.body.indices) yield Leaf(n)).toList)
-      clauseGenerator(simpClause, simpClause, Some(indexTree))
-    } else {
-      List(clause)
-    }
+  if (needsSplittingPos(simpConstraint)) {
+    val simpClause = Clause(clause.head, clause.body, simpConstraint)
+
+    // File setup for appending results
+    // val outputFile = new File("simpClause_results_12.txt")
+    // val fileWriter = new FileWriter(outputFile, true)  // Append mode
+    // val writer = new PrintWriter(fileWriter)
+
+    // // Writing simpClause to the file
+    // writer.println("Simplified Clause:")
+    // writer.println(simpClause.toPrologString)  // Assuming `toPrologString` formats it correctly
+    
+    // // Don't forget to close the writer
+    // writer.close()
+
+    val indexTree =
+      Tree(-1, (for (n <- clause.body.indices) yield Leaf(n)).toList)
+    clauseGenerator(simpClause, simpClause, Some(indexTree))
+  } else {
+    List(clause)
   }
+}
 
   private def getSizeSubexpression(subexpression: IExpression): Int = {
     var count = 0
@@ -174,10 +187,11 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
     var clauses: Clauses = ArrayBuffer.empty[Clause]
     var predicates: List[IAtom] = List.empty[IAtom]
     var constraintWithPredicates = newConstraint //constraint
+    var newBody = body
     if(findOrInstancesPos(newConstraint) != List()) { //constraint
       val listOfDisjunctions = findOrInstancesPos(newConstraint) //constraint
       for(disjunction <- listOfDisjunctions){
-        val constants = SymbolCollector constantsSorted disjunction
+        val constants = SymbolCollector constantsSorted clause.constraint
         val sorts = constants map (Sort sortOf _)
         val pred = MonoSortedPredicate("intPred" + symbolCounter, sorts)
         tempPredicates += pred
@@ -185,12 +199,11 @@ def process(clauses: Clauses, hints: VerificationHints, frozenPredicates: Set[Pr
         val intLit = IAtom(pred, constants)
         constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
         predicates = predicates ++ List(intLit)
-        clauses = clauses ++ clauseGenerator(Clause(intLit, body, disjunction), initialClause,indexTree) // if empty then add body ++ predicataes
+        clauses = clauses ++ clauseGenerator(Clause(intLit, newBody, disjunction), initialClause,indexTree) //newBody can be replaced with body
+        newBody = List(intLit)
       }
 
-      // for (predicate <- predicates){
-      clauses =  clauses ++ Seq(Clause(head, predicates, constraintWithPredicates))
-      // }
+      clauses =  clauses ++ Seq(Clause(head, newBody, constraintWithPredicates)) //newBody
     }
     clauses
   }
