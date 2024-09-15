@@ -63,6 +63,7 @@ class BooleanClauseSplitter extends HornPreprocessor {
   val name : String = "Boolean clause splitting"
 
   private var symbolCounter = 0
+  private var storePredicate: List[IAtom] = List()
   private val tempPredicates = new MHashSet[Predicate]
   private val clauseBackMapping = new MHashMap[Clause, (Clause, Tree[Int])]
 
@@ -108,7 +109,6 @@ private def moreCleverSplit(clause: Clause)
   if (needsSplittingPos(simpConstraint)) {
     val simpClause = Clause(clause.head, clause.body, simpConstraint)
 
-    // File setup for appending results
     // val outputFile = new File("simpClause_results_12.txt")
     // val fileWriter = new FileWriter(outputFile, true)
     // val writer = new PrintWriter(fileWriter)
@@ -176,7 +176,7 @@ private def moreCleverSplit(clause: Clause)
    * a conjunction containing disjunctions on either right or left hand side of the conjunction.
    * The functions generates predicates for all instances of or-statements.
    */
-  private def predicateGenerator(clause : Clause,
+private def predicateGenerator(clause : Clause,
                                  initialClause : Clause,
                                  indexTree : Option[Tree[Int]])
                                 (implicit p : SimpleAPI) : Clauses = {
@@ -184,10 +184,9 @@ private def moreCleverSplit(clause: Clause)
     val newConstraint = Transform2NNF(constraint)
     var clauses: Clauses = ArrayBuffer.empty[Clause]
     var predicates: List[IAtom] = List.empty[IAtom]
-    var constraintWithPredicates = newConstraint //constraint
-    var newBody = body
-    if(findOrInstancesPos(newConstraint) != List()) { //constraint
-      val listOfDisjunctions = findOrInstancesPos(newConstraint) //constraint
+    var constraintWithPredicates = newConstraint 
+    if(findOrInstancesPos(newConstraint) != List()) { 
+      val listOfDisjunctions = findOrInstancesPos(newConstraint)
       for(disjunction <- listOfDisjunctions){
         val constants = SymbolCollector constantsSorted clause.constraint
         val sorts = constants map (Sort sortOf _)
@@ -197,11 +196,13 @@ private def moreCleverSplit(clause: Clause)
         val intLit = IAtom(pred, constants)
         constraintWithPredicates = ExpressionReplacingVisitor(constraintWithPredicates, disjunction, true)
         predicates = predicates ++ List(intLit)
-        clauses = clauses ++ clauseGenerator(Clause(intLit, newBody, disjunction), initialClause,indexTree) //newBody can be replaced with body
-        newBody = List(intLit)
+        if (symbolCounter == 1){
+          storePredicate = body
+        }
+        clauses = clauses ++ clauseGenerator(Clause(intLit, storePredicate, disjunction), initialClause,indexTree) //newBody can be replaced with body
+        storePredicate = List(intLit)
       }
-
-      clauses =  clauses ++ Seq(Clause(head, newBody, constraintWithPredicates)) //newBody
+      clauses =  clauses ++ Seq(Clause(head, storePredicate, constraintWithPredicates)) //newBody
     }
     clauses
   }
@@ -214,7 +215,7 @@ private def moreCleverSplit(clause: Clause)
    * and if the left or right hand side of a conjunct needs splitting, it's handled
    * by another function.
    */
-  private def clauseGenerator(clause: Clause, initialClause: Clause, indexTree: Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
+  def clauseGenerator(clause: Clause, initialClause: Clause, indexTree: Option[Tree[Int]])(implicit p: SimpleAPI): Clauses = {
     val Clause(head, body, constraint) = clause
     constraint match {
       case Disj(f1, f2) =>
@@ -233,7 +234,7 @@ private def moreCleverSplit(clause: Clause)
             val clauses1 = predicateGenerator(Clause(head, body, f1), initialClause, indexTree)
             val clauses2 = predicateGenerator(Clause(head, body, f2), initialClause, indexTree)
             val newClauseHead = clauses1.last.head
-            val newClauseBody = clauses1.last.body ++ clauses2.last.body
+            val newClauseBody = clauses2.last.body //TODO: is it right to remove clauses1.last.body
             val newClause = Clause(newClauseHead, newClauseBody, i(true))
             clauses1.init ++ clauses2.init ++ Seq(newClause)
         }
